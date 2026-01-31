@@ -3,7 +3,7 @@ Database models for papers and subscribers.
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, String, DateTime, Boolean, Text, Float, Integer, JSON
+from sqlalchemy import Column, String, DateTime, Boolean, Text, Float, Integer, JSON, Index
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -36,6 +36,11 @@ class Paper(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
     included_in_digest = Column(Boolean, default=False)
     digest_date = Column(DateTime)
+
+    __table_args__ = (
+        Index("ix_papers_source", "source"),
+        Index("ix_papers_published_date", "published_date"),
+    )
 
 
 class Subscriber(Base):

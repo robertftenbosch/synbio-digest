@@ -4,11 +4,12 @@ API routes for subscription management.
 import secrets
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from typing import Optional
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Subscriber, get_db
+from app.db.models import Subscriber, Paper, get_db
 
 router = APIRouter(prefix="/api", tags=["subscriptions"])
 
@@ -95,13 +96,86 @@ async def get_subscriber_count(
     db: AsyncSession = Depends(get_db),
 ):
     """Get total subscriber count (public metric)."""
-    
+
     result = await db.execute(
         select(Subscriber).where(Subscriber.confirmed == True)
     )
     subscribers = result.scalars().all()
-    
+
     return {"count": len(subscribers)}
+
+
+@router.get("/papers/search")
+async def search_papers(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    source: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Search papers with filters."""
+
+    # Build query
+    query = select(Paper)
+    count_query = select(func.count(Paper.id))
+
+    # Apply filters
+    conditions = []
+
+    if q:
+        # Search in title and abstract
+        search_term = f"%{q}%"
+        conditions.append(
+            or_(
+                Paper.title.ilike(search_term),
+                Paper.abstract.ilike(search_term)
+            )
+        )
+
+    if source:
+        conditions.append(Paper.source == source.lower())
+
+    if category:
+        # Categories is stored as JSON array
+        conditions.append(Paper.categories.contains([category]))
+
+    if conditions:
+        for condition in conditions:
+            query = query.where(condition)
+            count_query = count_query.where(condition)
+
+    # Get total count
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Apply sorting and pagination
+    query = query.order_by(Paper.published_date.desc().nullslast())
+    query = query.offset(offset).limit(limit)
+
+    # Execute query
+    result = await db.execute(query)
+    papers = result.scalars().all()
+
+    return {
+        "papers": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "authors": p.authors,
+                "abstract": p.abstract[:300] + "..." if p.abstract and len(p.abstract) > 300 else p.abstract,
+                "source": p.source,
+                "url": p.url,
+                "published_date": p.published_date.isoformat() if p.published_date else None,
+                "relevance_score": p.relevance_score,
+                "categories": p.categories,
+            }
+            for p in papers
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 # Simple landing page HTML
